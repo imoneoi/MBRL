@@ -1,32 +1,24 @@
+from typing import Callable
 from multiprocessing import connection, context, Pipe, cpu_count
 from select import select
 import random
 
 import numpy as np
-import gym
 from tqdm import tqdm
 import torch
 
-from policy.base_policy import BasePolicy
 from utils.cloudpickle_wrapper import CloudpickleWrapper
 
 
 def worker_(
         pipe: connection.Connection,
-        env_wrapper: CloudpickleWrapper,
-        policy_wrapper: CloudpickleWrapper,
-        num_data_points: int,
-        seed: int
+        env_fn_wrapper: CloudpickleWrapper,
+        policy_fn_wrapper: CloudpickleWrapper,
+        num_data_points: int
 ):
     # Unwrap
-    env = env_wrapper.data
-    policy = policy_wrapper.data
-
-    # seed all RNGs
-    env.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    random.seed(seed)
+    env = env_fn_wrapper.data()
+    policy = policy_fn_wrapper.data()
 
     # collect
     obs = env.reset()
@@ -51,8 +43,8 @@ def worker_(
 
 
 def collect_data(
-        env: gym.Env,
-        policy: BasePolicy,
+        env_fn: Callable,
+        policy_fn: Callable,
         num_data_points: int,
 
         n_jobs: int = cpu_count()
@@ -65,10 +57,9 @@ def collect_data(
         parent_remote, child_remote = Pipe()
         args = (
             child_remote,
-            CloudpickleWrapper(env),
-            CloudpickleWrapper(policy),
-            num_data_points // n_jobs,
-            proc_idx  # independent seed for every worker
+            CloudpickleWrapper(env_fn),
+            CloudpickleWrapper(policy_fn),
+            num_data_points // n_jobs
         )
         process = context.Process(target=worker_, args=args, daemon=True)
 

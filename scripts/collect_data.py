@@ -20,14 +20,17 @@ def main():
 
     args = parser.parse_args()
 
-    # env and policy
-    env = gym.wrappers.TimeLimit(HalfCheetahEnv(), 1000)
-    policy = RandomPolicy(env)
+    # env and policy fn
+    def env_fn():
+        return gym.wrappers.TimeLimit(HalfCheetahEnv(), 1000)
+
+    def policy_fn():
+        return RandomPolicy(env_fn())
 
     # collect
     dataset = collect_data(
-        env,
-        policy,
+        env_fn,
+        policy_fn,
         args.n
     )
     # save dataset

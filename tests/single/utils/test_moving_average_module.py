@@ -1,5 +1,3 @@
-import random
-
 import pytest
 import torch
 
@@ -19,7 +17,7 @@ def test_moving_average_std(
         batch_factor: float = 0.1,
         dims: int = 10,
 
-        seed: int = 0
+        seed: int = 1
 ):
     # random seed
     torch.manual_seed(seed)
@@ -31,7 +29,7 @@ def test_moving_average_std(
     idx = 0
     while idx < n:
         # get random batch
-        sz = random.randint(1, max(1, int((n - idx) * batch_factor)))
+        sz = torch.randint(low=1, high=max(1, int((n - idx) * batch_factor)) + 1, size=[1])
         batch = x[idx: idx + sz]
         idx += sz
 
@@ -42,7 +40,7 @@ def test_moving_average_std(
         mean, std = module.get_mean_std()
 
         gt_mean = torch.mean(x[:idx], dim=0)
-        gt_std = torch.std(x[:idx], dim=0)
+        gt_std = torch.sqrt(torch.mean((x[:idx] - gt_mean) ** 2, dim=0))
 
         a_tol = 1e-8
         r_tol = 1e-4

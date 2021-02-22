@@ -10,7 +10,8 @@ class RandomPolicy(BasePolicy, ABC):
     def __init__(self, env: gym.Env):
         super().__init__()
 
-        self.action_space = env.action_space
+        self.action_high = env.action_space.high
+        self.action_low = env.action_space.low
 
     def infer(self, obs: np.ndarray):
-        return self.action_space.sample()
+        return np.random.uniform(low=self.action_low, high=self.action_high)

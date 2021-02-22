@@ -1,9 +1,11 @@
 from multiprocessing import connection, context, Pipe, cpu_count
 from select import select
+import random
 
 import numpy as np
 import gym
 from tqdm import tqdm
+import torch
 
 from policy.base_policy import BasePolicy
 from utils.cloudpickle_wrapper import CloudpickleWrapper
@@ -13,15 +15,22 @@ def worker_(
         pipe: connection.Connection,
         env_wrapper: CloudpickleWrapper,
         policy_wrapper: CloudpickleWrapper,
-        num_data_points: int
+        num_data_points: int,
+        seed: int
 ):
     # Unwrap
     env = env_wrapper.data
     policy = policy_wrapper.data
 
+    # seed all RNGs
+    env.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    random.seed(seed)
+
     # collect
     obs = env.reset()
-    for _ in range(num_data_points):
+    for step in range(num_data_points):
         act = policy.infer(obs)
         next_obs, rew, done, info = env.step(act)
 
@@ -52,13 +61,14 @@ def collect_data(
     processes = []
     pipes = []
 
-    for _ in range(n_jobs):
+    for proc_idx in range(n_jobs):
         parent_remote, child_remote = Pipe()
         args = (
             child_remote,
             CloudpickleWrapper(env),
             CloudpickleWrapper(policy),
-            num_data_points // n_jobs
+            num_data_points // n_jobs,
+            proc_idx  # independent seed for every worker
         )
         process = context.Process(target=worker_, args=args, daemon=True)
 
@@ -79,7 +89,7 @@ def collect_data(
             break
 
         # Wait for read
-        select([pipe.fileno() for pipe in pipes], [], [], 1)
+        select([pipe.fileno() for pipe in pipes], [], [], 0.1)
 
         # Read pipes
         for pipe in pipes:
@@ -87,12 +97,16 @@ def collect_data(
                 continue
 
             # Receive data point
-            data_point = pipe.recv()
-            for k, v in data_point.items():
-                dataset.setdefault(k, [])
-                dataset[k].append(v)
+            try:
+                data_point = pipe.recv()
+                for k, v in data_point.items():
+                    dataset.setdefault(k, [])
+                    dataset[k].append(v)
 
-            t.update(1)
+                t.update(1)
+            except EOFError:
+                # Ignore EOF (when process died)
+                pass
 
     # Convert dataset to numpy
     dataset = {k: np.array(v) for k, v in dataset.items()}

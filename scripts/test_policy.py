@@ -22,7 +22,7 @@ def main():
     torch.set_num_threads(1)
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", type=str, default="static/models/halfcheetah_random.npz.checkpoint")
+    parser.add_argument("--model", type=str, default="static/models/halfcheetah_random.npz_mlp.checkpoint")
     parser.add_argument("--num-epochs", type=int, default=1)
 
     args = parser.parse_args()

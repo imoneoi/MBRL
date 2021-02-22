@@ -1,11 +1,13 @@
 from abc import ABC
 from typing import Union, Dict
+import time
 
 import torch
 from torch import nn
 import numpy as np
 
 from model.base_model import BaseModel
+from utils.moving_average_module import MovingAverageModule
 
 
 class NNMlpModel(BaseModel, ABC):
@@ -30,8 +32,6 @@ class NNMlpModel(BaseModel, ABC):
 
         # Multilayer perceptron
         layers = [
-            nn.BatchNorm1d(self.x_dims, momentum=1e-4),  # Data Normalization, using 10000 (1e-4) sample average
-
             self.linear_layer(self.x_dims, num_hidden),
             nn.ReLU(),
             nn.BatchNorm1d(num_hidden)
@@ -54,6 +54,10 @@ class NNMlpModel(BaseModel, ABC):
         self.optimizer = torch.optim.Adam(self.net.parameters(), lr=learning_rate)
         self.batch_size = batch_size
 
+        # Normalizer
+        self.norm_x = MovingAverageModule(self.x_dims, device=self.device)
+        self.norm_y = MovingAverageModule(self.y_dims, device=self.device)
+
     '''
         Linear layer with orthogonal init
     '''
@@ -72,14 +76,6 @@ class NNMlpModel(BaseModel, ABC):
     def kernel(x: torch.Tensor):
         return torch.cat([x, torch.sin(x), torch.cos(x)], dim=-1)
 
-    def forward(self, x: torch.Tensor):
-        # Kernel
-        x = self.kernel(x)
-
-        # Infer
-        delta = self.net(x)
-        return delta
-
     def infer(self,
               obs: Union[torch.Tensor, np.ndarray],
               act: Union[torch.Tensor, np.ndarray]):
@@ -89,8 +85,17 @@ class NNMlpModel(BaseModel, ABC):
         # Concatenate
         x = torch.cat([obs, act], dim=-1)
 
+        # Kernel
+        x = self.kernel(x)
+
+        # Normalize
+        x = self.norm_x.normalize(x)
+
         # Infer
-        delta = self(x)
+        delta = self.net(x)
+
+        # Denormalize
+        delta = self.norm_y.denormalize(delta)
 
         # Add
         next_obs = obs + delta
@@ -102,15 +107,26 @@ class NNMlpModel(BaseModel, ABC):
         # Switch to train mode
         self.net.train()
 
-        # Concatenate dataset
+        # Convert dataset
         dataset_x = np.concatenate([dataset["obs"], dataset["act"]], axis=-1)
         dataset_y = dataset["next_obs"] - dataset["obs"]
 
+        # To tensor
+        dataset_x = torch.tensor(dataset_x, dtype=torch.float)
+        dataset_y = torch.tensor(dataset_y, dtype=torch.float)
+
+        # Kernel
+        dataset_x = self.kernel(dataset_x)
+
+        # Normalize
+        self.norm_x.update(dataset_x)
+        self.norm_y.update(dataset_y)
+        dataset_x = self.norm_x.normalize(dataset_x)
+        dataset_y = self.norm_y.normalize(dataset_y)
+
+        # Data loader
         data_loader = torch.utils.data.DataLoader(
-            torch.utils.data.TensorDataset(
-                torch.tensor(dataset_x, dtype=torch.float),
-                torch.tensor(dataset_y, dtype=torch.float)
-            ),
+            torch.utils.data.TensorDataset(dataset_x, dataset_y),
             batch_size=self.batch_size,
             shuffle=True,
             pin_memory=True)
@@ -119,6 +135,7 @@ class NNMlpModel(BaseModel, ABC):
         loss_fn = torch.nn.MSELoss()
 
         for epoch in range(num_epochs):
+            time_start = time.time()
             losses = []
             for data_x, data_y in data_loader:
                 # Transfer data
@@ -126,7 +143,7 @@ class NNMlpModel(BaseModel, ABC):
                 data_y = data_y.to(self.device)
 
                 # Train model
-                y_hat = self(data_x)
+                y_hat = self.net(data_x)
                 loss = loss_fn(y_hat, data_y)
 
                 self.optimizer.zero_grad()
@@ -134,10 +151,11 @@ class NNMlpModel(BaseModel, ABC):
                 self.optimizer.step()
 
                 # Record loss
-                losses.append(loss.detach().cpu().numpy())
+                losses.append(loss.item())
 
             # Print
-            print("Epoch #{}: loss {}".format(epoch, np.mean(losses)))
+            time_elapsed = time.time() - time_start
+            print("Epoch #{}: loss {} time {:.2f}s".format(epoch, np.mean(losses), time_elapsed))
 
     def test(self, dataset: Dict[str, Union[torch.Tensor, np.ndarray]]):
         # Concatenate dataset
@@ -167,16 +185,16 @@ class NNMlpModel(BaseModel, ABC):
 
         y_hat = np.concatenate(y_hat, axis=0)
 
-        # Calculate relative rmse
+        # Calculate relative root mse
         mse = np.mean((y_hat - dataset_y) ** 2, axis=0)
-        rel_rmse = np.sqrt(mse / np.std(dataset_y))
-        overall_rel_rmse = np.mean(rel_rmse)
+        rel_root_mse = np.sqrt(mse / np.std(dataset_y))
+        overall_rel_root_mse = np.mean(rel_root_mse)
 
-        print("Relative RMSE (%):\n{}\nAverage (%): {}".format(
-            rel_rmse * 100,
-            overall_rel_rmse * 100))
+        print("Relative Root MSE (%):\n{}\nAverage (%): {}".format(
+            rel_root_mse * 100,
+            overall_rel_root_mse * 100))
 
         return {
             "mse": mse,
-            "rel_rmse": rel_rmse
+            "rel_root_mse": rel_root_mse
         }

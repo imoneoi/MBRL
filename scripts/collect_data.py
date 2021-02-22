@@ -21,7 +21,7 @@ def main():
     args = parser.parse_args()
 
     # env and policy
-    env = HalfCheetahEnv()
+    env = gym.wrappers.TimeLimit(HalfCheetahEnv(), 1000)
     policy = RandomPolicy(env)
 
     # collect

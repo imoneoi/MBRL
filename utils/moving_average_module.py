@@ -4,6 +4,8 @@ import torch
 from torch import nn
 
 
+# Welford's online algorithm (Parallel algorithm)
+# ref: https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance
 class MovingAverageModule(nn.Module, ABC):
     def __init__(self,
                  dims: int,
@@ -17,7 +19,7 @@ class MovingAverageModule(nn.Module, ABC):
 
         self.n = self.static_parameter(1)
         self.mean = self.static_parameter(dims)
-        self.mean_sq = self.static_parameter(dims)
+        self.M2 = self.static_parameter(dims)
 
         self.eps = eps
 
@@ -30,24 +32,24 @@ class MovingAverageModule(nn.Module, ABC):
             requires_grad=False)
 
     def update(self, batch: torch.Tensor):
-        # weight
-        n_cur = batch.shape[0]
-        w_cur = n_cur / (n_cur + self.n)
+        # update mean
+        b_sz = batch.shape[0]
+        b_mean = torch.mean(batch, dim=0).to(self.device)
+        b_M2 = torch.sum((batch - b_mean) ** 2, dim=0).to(self.device)
 
-        # get mean and std
-        mean_cur = torch.mean(batch, dim=0).to(self.device)
-        mean_sq_cur = torch.mean(batch ** 2, dim=0).to(self.device)
+        # update std
+        delta = b_mean - self.mean
+        self.M2.copy_(self.M2 + b_M2 + (delta ** 2) * self.n * b_sz / (self.n + b_sz))
 
-        # update
-        self.mean.copy_((1 - w_cur) * self.mean + w_cur * mean_cur)
-        self.mean_sq.copy_((1 - w_cur) * self.mean_sq + w_cur * mean_sq_cur)
-        self.n.copy_(self.n + n_cur)
+        # update mean
+        self.mean.copy_((self.n * self.mean + b_sz * b_mean) / (self.n + b_sz))
+
+        # update N
+        self.n.copy_(self.n + b_sz)
 
     def get_mean_std(self):
         mean = self.mean
-        std = torch.sqrt(torch.maximum(
-            torch.zeros(1, device=self.device),
-            self.mean_sq - self.mean ** 2))  # clip to zero to avoid NaN
+        std = torch.sqrt(self.M2 / (self.n - 1))
 
         return mean, std
 

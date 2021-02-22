@@ -42,9 +42,9 @@ def test_moving_average_std(
         mean, std = module.get_mean_std()
 
         gt_mean = torch.mean(x[:idx], dim=0)
-        gt_std = torch.sqrt(torch.mean((x[:idx] - gt_mean) ** 2, dim=0))
+        gt_std = torch.std(x[:idx], dim=0)
 
-        a_tol = 1e-6
-        r_tol = 5e-4
+        a_tol = 1e-8
+        r_tol = 1e-4
         assert torch.isclose(mean, gt_mean, atol=a_tol, rtol=r_tol).all()
         assert torch.isclose(std, gt_std, atol=a_tol, rtol=r_tol).all()
